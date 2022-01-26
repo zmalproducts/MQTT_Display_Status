@@ -77,8 +77,8 @@ struct singleDataRecord {
 
 typedef struct singleDataRecord SingleDataRecord;
 
-const int IMAXDATARECORDS = 3;
-SingleDataRecord strecordValues[IMAXDATARECORDS];
+const int CIMAXDATARECORDS = 3;
+SingleDataRecord strecordValues[CIMAXDATARECORDS];
 
 enum MQTTSubscription {
     MqSubOutsideTemp = 0,
@@ -197,7 +197,7 @@ void initDataStructures(void){
 
 volatile int cnt=0;
 
-  for (cnt; cnt <= IMAXDATARECORDS; cnt++){
+  for (cnt; cnt <= CIMAXDATARECORDS; cnt++){
     //strecordValues[cnt].decimals = 0;
     strecordValues[cnt].recieved = false;
     strecordValues[cnt].Value = 0;
@@ -214,6 +214,26 @@ volatile int cnt=0;
   
 */
 }
+
+int checkRevcievedStatus(SingleDataRecord Vaules[], int n){
+
+volatile int iRecCtr = 0;
+
+ for (int i=0; i<=n-1; i++){
+  if (Vaules[i].recieved == true){
+    Serial.print("checkRevcievedStatus recieved[i]: "); Serial.print(Vaules[i].recieved); Serial.print("checkRevcievedStatus i: "); Serial.print(i); Serial.print(" iRecCtr: "); Serial.println(iRecCtr); 
+    iRecCtr++;
+  }
+ }
+ Serial.printf("iRecCtr"); Serial.println(iRecCtr); 
+ if (iRecCtr == n){
+   return 1;
+ }
+ ;
+
+return 0;
+}
+
 
 void StoreValue(MQTTSubscription enrecievedValue, double value){
 
@@ -258,15 +278,18 @@ void MQTT_connect() {
 
 void setup()
 {
-  
+  //  ------ Setup I/O ----------------------------------------------------------------------------
   pinMode(LED_PIN, OUTPUT);
-  // set led off
-  digitalWrite(LED_PIN, LOW);  // Turn the LED off by making the voltage HIGH
 
-  /****** serial setup ****************************/
+  digitalWrite(LED_PIN, LOW);  // Turn the LED off 
+
+  //  ------ Setup Serial -------------------------------------------------------------------------
   Serial.begin(115200);  
   delay(10); //Take some time to open up the Serial Monitor
   Serial.println("serial running");
+
+  
+  //  ------ Setup Wlan ---------------------------------------------------------------------------
 
   /****** Connect to WiFi access point. **********/ 
   Serial.println("Wlan setup ...");
@@ -288,12 +311,14 @@ void setup()
   Serial.println("WiFi connected");
   Serial.println("IP address: "); Serial.println(WiFi.localIP());
   
-  // Setup MQTT subscription for onoff feed.
+  //  ------ Setup MQTT subscription for feeds. ---------------------------------------------------
+
   mqtt.subscribe(&outsidetemp);
   mqtt.subscribe(&outsidehum);
   mqtt.subscribe(&pressout);
   Serial.println("mqtt subscribed.");
 
+//  ------ Setup sleep timer ----------------------------------------------------------------------
   esp_sleep_enable_timer_wakeup(TIME_TO_SLEEP * uS_TO_S_FACTOR);
   Serial.println("Setup ESP32 to sleep for every " + String(TIME_TO_SLEEP) +
   " Seconds ...");
@@ -301,20 +326,22 @@ void setup()
    //Print the wakeup reason for ESP32
   print_wakeup_reason();
 
-
-  SPI.begin(EPD_SCLK, EPD_MISO, EPD_MOSI);
-
-  //Show statuscode setup done on led  
-  LEDShowStatusCode(LED_CODE_SETUP_DONE);
-
 ++bootCount;
   Serial.println("Boot number: " + String(bootCount));
 
-// initialize datastructures
+// ------ Setup display ---------------------------------------------------------------------------
+  SPI.begin(EPD_SCLK, EPD_MISO, EPD_MOSI);
+  
+  display.init();
+  display.setTextColor(GxEPD_BLACK);
+
+// ------ Setup Application------------------------------------------------------------------------
   void initDataStructures(void);
 }
 
 void loop(){
+
+int ValueRcvStatus = 0;
   MQTT_connect();
   
   // this is our 'wait for incoming subscription packets' busy subloop
@@ -337,6 +364,11 @@ void loop(){
       StoreValue(MqSubOutsidePressure, atof((char*)pressout.lastread));
     }
   }
+
+
+ValueRcvStatus = checkRevcievedStatus(strecordValues, CIMAXDATARECORDS);
+  Serial.printf("ValueRcvStatus"); Serial.println(ValueRcvStatus);
+
 
   // ping the server to keep the mqtt connection alive
   if(! mqtt.ping()) {
