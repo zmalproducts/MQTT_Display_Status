@@ -3,6 +3,7 @@
  /*
     LilyGo Ink Screen Series Test
         - Created by Lewis he
+        - Display Size: 212x104px
 */
 
 // According to the board, cancel the corresponding macro definition
@@ -16,7 +17,10 @@
 #include <GxDEPG0213BN/GxDEPG0213BN.h>    // 2.13" b/w  form DKE GROUP
 #include GxEPD_BitmapExamples
 
+#include <Fonts/FreeSans9pt7b.h>
 #include <Fonts/FreeSans12pt7b.h>
+#include <Fonts/FreeSans18pt7b.h>
+#include <Fonts/FreeSansBold24pt7b.h>
 
 #include <GxIO/GxIO_SPI/GxIO_SPI.h>
 #include <GxIO/GxIO.h>
@@ -26,7 +30,7 @@
 
 // user defines
 #define uS_TO_S_FACTOR 1000000  /* Conversion factor for micro seconds to seconds */
-#define TIME_TO_SLEEP  30       /* Time ESP32 will go to sleep (in seconds) */
+#define TIME_TO_SLEEP  300      /* Time ESP32 will go to sleep (in seconds) */
 
 /************************* WiFi Access Point *********************************/
 
@@ -80,7 +84,7 @@ typedef struct singleDataRecord SingleDataRecord;
 const int CIMAXDATARECORDS = 3;
 SingleDataRecord strecordValues[CIMAXDATARECORDS];
 
-enum MQTTSubscription {
+enum enMQTTSubscription {
     MqSubOutsideTemp = 0,
     MqSubOutsideHumidity = 1,
     MqSubOutsidePressure = 2,
@@ -160,89 +164,43 @@ void LEDShowStatusCode(int LEDStateCode){
   }
 }
 
-void statecontrol(int *state, wl_status_t WlanSate, bool MQTTState){
-
-  switch (*state) {
-  
-  //connect to WLAN
-  case ST_WL_CON:
-        
-      if (WlanSate == WL_CONNECTED){
-        *state = ST_MQ_CON;
-        Serial.println("ST_WL_CON");
-        LEDShowStatusCode(LED_CODE_WL_CON);
-      }
-      else{
-        LEDShowStatusCode(LED_CODE_WL_NCON);
-        Serial.println("wait for conn");
-      }
-    break;
-        
-  // connect to MQTT Borker
-  case ST_MQ_CON:
-    delay(5000);
-        Serial.println("ST_MQ_CON");
-        *state = ST_MQ_CON;
-    break;  
-
-  default:
-      LEDShowStatusCode(LED_CODE_ERROR);
-      Serial.println("default");
-    break;  
-
-    }
-}
 
 void initDataStructures(void){
 
 volatile int cnt=0;
 
   for (cnt; cnt <= CIMAXDATARECORDS; cnt++){
-    //strecordValues[cnt].decimals = 0;
     strecordValues[cnt].recieved = false;
     strecordValues[cnt].Value = 0;
   }
-/*
-  strecordValues[MqSubOutsideTemp].cValueName = "Aussentemperatur"; 
-  strecordValues[MqSubOutsideTemp].cUnit = "°C";
-
-  strecordValues[MqSubOutsideHumidity].cValueName = "Luftfeuchte";
-  strecordValues[MqSubOutsidePressure].cUnit = "%";
-
-  strecordValues[MqSubOutsidePressure].cValueName = "Luftdruck";
-  strecordValues[MqSubOutsidePressure].cUnit = "hPa";  
-  
-*/
 }
 
 int checkRevcievedStatus(SingleDataRecord Vaules[], int n){
-
 volatile int iRecCtr = 0;
-
+//scan if the all messages were recieved
  for (int i=0; i<=n-1; i++){
   if (Vaules[i].recieved == true){
-    Serial.print("checkRevcievedStatus recieved[i]: "); Serial.print(Vaules[i].recieved); Serial.print("checkRevcievedStatus i: "); Serial.print(i); Serial.print(" iRecCtr: "); Serial.println(iRecCtr); 
+    //Serial.print("checkRevcievedStatus recieved[i]: "); Serial.print(Vaules[i].recieved); Serial.print("checkRevcievedStatus i: "); Serial.print(i); Serial.print(" iRecCtr: "); Serial.println(iRecCtr); 
     iRecCtr++;
   }
  }
- Serial.printf("iRecCtr"); Serial.println(iRecCtr); 
+
+ //Serial.printf("iRecCtr"); Serial.println(iRecCtr); 
  if (iRecCtr == n){
    return 1;
  }
- ;
 
 return 0;
 }
 
 
-void StoreValue(MQTTSubscription enrecievedValue, double value){
+void StoreValue(enMQTTSubscription enrecievedValue, double value){
 
  strecordValues[enrecievedValue].Value = value;
  strecordValues[enrecievedValue].recieved = true;                          // set value recieved flag
 
   Serial.print(F("stored value ")); Serial.print(value); Serial.print(F(" in ")); Serial.print(enrecievedValue); Serial.print(F(" recv flag ")); Serial.println(strecordValues[enrecievedValue].recieved); 
 }
-
 
 // Function to connect and reconnect as necessary to the MQTT server.
 // Should be called in the loop function and it will take care if connecting.
@@ -271,6 +229,38 @@ void MQTT_connect() {
        delay(5000);  // wait 5 seconds
   }
   Serial.println("MQTT Connected!");
+}
+
+
+void printScreen(){
+  int firstlineY = 40;
+  int secondlineY;
+  int thirdLineY;
+
+  secondlineY = firstlineY + 34;
+  thirdLineY = secondlineY + 34;
+
+  int hpalineY1 = thirdLineY-14;
+  int hpalineY2 = hpalineY1 + 11;
+  display.setRotation(1);
+  display.fillScreen(GxEPD_WHITE);
+  display.setTextColor(GxEPD_BLACK);  
+  display.setFont(&FreeSansBold24pt7b);
+  display.setCursor(114, firstlineY);
+  display.printf("%.1f", strecordValues[MqSubOutsideTemp].Value); display.setCursor(210, firstlineY); display.printf("C");   
+  display.setFont(&FreeSans18pt7b);
+  //display.println(String(strecordValues[MqSubOutsideHumidity].Value) + " %");
+  display.setCursor(118, secondlineY);
+  display.printf("%.1f", strecordValues[MqSubOutsideHumidity].Value); display.setCursor(212, secondlineY); display.print("%");
+  display.setCursor(100, thirdLineY);
+  display.printf("%.1f", strecordValues[MqSubOutsidePressure].Value); 
+  display.setFont(&FreeSans9pt7b);
+  display.setCursor(223, hpalineY1);
+  display.print("h");
+  display.setCursor(218, hpalineY2);
+  display.print("pa");
+
+  display.update();
 }
 
 /*************************************************************************************************************************************/
@@ -341,7 +331,9 @@ void setup()
 
 void loop(){
 
-int ValueRcvStatus = 0;
+
+
+
   MQTT_connect();
   
   // this is our 'wait for incoming subscription packets' busy subloop
@@ -365,14 +357,21 @@ int ValueRcvStatus = 0;
     }
   }
 
-
-ValueRcvStatus = checkRevcievedStatus(strecordValues, CIMAXDATARECORDS);
-  Serial.printf("ValueRcvStatus"); Serial.println(ValueRcvStatus);
-
+  // alle messages bekommen -> anzeigen & powerdown
+  if(checkRevcievedStatus(strecordValues, CIMAXDATARECORDS) == 1){
+    printScreen();
+    
+    display.powerDown();    
+    Serial.println("Going to sleep now");
+    delay(1000);
+    Serial.flush();     
+    esp_deep_sleep_start();
+  };
 
   // ping the server to keep the mqtt connection alive
   if(! mqtt.ping()) {
     mqtt.disconnect();
   }
+
 
 }
