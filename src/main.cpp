@@ -11,6 +11,7 @@
 
 #include <boards.h>
 #include <GxEPD.h>
+//#include <Adafruit_GFX.h>
 #include <SD.h>
 #include <FS.h>
 
@@ -28,9 +29,14 @@
 #include "Adafruit_MQTT.h"
 #include "Adafruit_MQTT_Client.h"
 
-// user defines
+/*********************** I/O Setup *******************************************/
+
+#define PIN_VBAT 35             // Battery Voltage pin
+
+/*********************** Sleep Setup *****************************************/
+// user define
 #define uS_TO_S_FACTOR 1000000  /* Conversion factor for micro seconds to seconds */
-#define TIME_TO_SLEEP  300      /* Time ESP32 will go to sleep (in seconds) */
+#define TIME_TO_SLEEP  15      /* Time ESP32 will go to sleep (in seconds) */
 
 /************************* WiFi Access Point *********************************/
 
@@ -56,7 +62,6 @@
 #define LED_CODE_WL_NCON 11
 #define LED_CODE_ERROR 9999
 
-
 /**************************************************************************/
 
 
@@ -73,16 +78,18 @@ Adafruit_MQTT_Subscribe pressout = Adafruit_MQTT_Subscribe(&mqtt, "/sensors/Pres
 
 
 struct singleDataRecord {
-  char cValueName [];   // name of the value
-  char cUnit [];         // unit of the value
   double Value;           // Value as double  
   bool recieved;          // 0 = no, 1 = yes  
 };
 
 typedef struct singleDataRecord SingleDataRecord;
 
-const int CIMAXDATARECORDS = 3;
-SingleDataRecord strecordValues[CIMAXDATARECORDS];
+struct battery {  
+  double adVoltageThresh[4];    // full @ max
+  unsigned int batterystatus;  
+};
+
+typedef struct battery Battery;
 
 enum enMQTTSubscription {
     MqSubOutsideTemp = 0,
@@ -91,10 +98,26 @@ enum enMQTTSubscription {
     MqSubNone = 32767,
 };
 
+enum enLocalValues {
+    LvBatteryVoltage = 0,
+};
+
 RTC_DATA_ATTR int bootCount = 0;
 
-void showFont(const char name[], const GFXfont *f);
-void drawCornerTest(void);
+const int CIMAXMQTTRECORDS = 3;
+const int CIMAXLOCALRECORDS = 1;
+
+
+SingleDataRecord stMqttRcvValues[CIMAXMQTTRECORDS];
+SingleDataRecord stLocaDataBus[CIMAXLOCALRECORDS];
+
+Battery stBattery;        // battery
+
+
+
+
+
+/**functions ***********************************************************************************************************************************/
 
 
 void print_wakeup_reason(){
@@ -111,10 +134,6 @@ void print_wakeup_reason(){
     default : Serial.printf("Wakeup was not caused by deep sleep: %d\n",wakeup_reason); break;
   }
 }
-
-
-/**functions ***********************************************************************************************************************************/
-
 
 void LEDBlink(int pin, unsigned long cul_PauseTime, unsigned int repetitions){
 
@@ -164,16 +183,74 @@ void LEDShowStatusCode(int LEDStateCode){
   }
 }
 
+void getBatteryVoltage(SingleDataRecord *Value){
+     
+  Value->Value = ((long)analogRead(PIN_VBAT) * 3600. / 4095. * 2.) / 1000 ;
+  Value->recieved   = true;
+
+}
+
+int igetBatStatus(){
+
+double voltage = 0;
+
+  getBatteryVoltage(&stLocaDataBus[LvBatteryVoltage]);
+   
+  voltage = stLocaDataBus[LvBatteryVoltage].Value;  
+
+  if (voltage <= stBattery.adVoltageThresh[0]){       // [    ]
+    stBattery.batterystatus = 0;  
+  }
+  if ((voltage > stBattery.adVoltageThresh[0]) &&     // [   |]
+        (voltage <= stBattery.adVoltageThresh[1])){
+    stBattery.batterystatus = 1;  
+  }
+  if ((voltage > stBattery.adVoltageThresh[1]) &&     // [  ||]
+        (voltage <= stBattery.adVoltageThresh[2])){
+    stBattery.batterystatus = 2;  
+  }  
+  if ((voltage > stBattery.adVoltageThresh[2]) &&     // [ |||]
+        (voltage <= stBattery.adVoltageThresh[3])){
+    stBattery.batterystatus = 3;  
+  }
+  if (voltage > stBattery.adVoltageThresh[3]){       // [||||]
+    stBattery.batterystatus = 4;  
+  }  
+  Serial.print("vBat: ");
+  Serial.println(voltage);
+
+  Serial.print("batterystatus: ");
+  Serial.println(stBattery.batterystatus);
+
+return stBattery.batterystatus;
+
+}
 
 void initDataStructures(void){
 
 volatile int cnt=0;
 
-  for (cnt; cnt <= CIMAXDATARECORDS; cnt++){
-    strecordValues[cnt].recieved = false;
-    strecordValues[cnt].Value = 0;
+// Mqtt recieved values
+  for (cnt = 0; cnt <= CIMAXMQTTRECORDS; cnt++){
+    stMqttRcvValues[cnt].recieved = false;
+    stMqttRcvValues[cnt].Value = 0;
   }
+
+// local Values  
+  for (cnt = 0; cnt <= CIMAXLOCALRECORDS; cnt++){
+    stLocaDataBus[cnt].recieved = false;
+    stLocaDataBus[cnt].Value = 0;
+  }  
+
+// battery
+  stBattery.adVoltageThresh[0] = 3.0;
+  stBattery.adVoltageThresh[1] = 3.5;
+  stBattery.adVoltageThresh[2] = 3.55;
+  stBattery.adVoltageThresh[3] = 3.6;
+  stBattery.batterystatus = 0;
 }
+
+
 
 int checkRevcievedStatus(SingleDataRecord Vaules[], int n){
 volatile int iRecCtr = 0;
@@ -193,15 +270,14 @@ volatile int iRecCtr = 0;
 return 0;
 }
 
-
 void StoreValue(enMQTTSubscription enrecievedValue, double value){
 
- strecordValues[enrecievedValue].Value = value;
- strecordValues[enrecievedValue].recieved = true;                          // set value recieved flag
+ stMqttRcvValues[enrecievedValue].Value = value;
+ stMqttRcvValues[enrecievedValue].recieved = true;                          // set value recieved flag
 
-  Serial.print(F("stored value ")); Serial.print(value); Serial.print(F(" in ")); Serial.print(enrecievedValue); Serial.print(F(" recv flag ")); Serial.println(strecordValues[enrecievedValue].recieved); 
+  Serial.print(F("stored value ")); Serial.print(value); Serial.print(F(" in ")); Serial.print(enrecievedValue); Serial.print(F(" recv flag ")); Serial.println(stMqttRcvValues[enrecievedValue].recieved); 
 }
-
+ 
 // Function to connect and reconnect as necessary to the MQTT server.
 // Should be called in the loop function and it will take care if connecting.
 void MQTT_connect() {
@@ -231,35 +307,61 @@ void MQTT_connect() {
   Serial.println("MQTT Connected!");
 }
 
-
 void printScreen(){
-  int firstlineY = 40;
+  int headerline = 0;
+  int firstlineY = 52;
   int secondlineY;
-  int thirdLineY;
+  int thirdLineY;  
+
+  int startposBatteryX = 200;
+  int startposBatteryY = 0;
 
   secondlineY = firstlineY + 34;
-  thirdLineY = secondlineY + 34;
+  thirdLineY = secondlineY + 34; 
+
 
   int hpalineY1 = thirdLineY-14;
   int hpalineY2 = hpalineY1 + 11;
+
+  int batstatint = 0;
+  batstatint = 4-stBattery.batterystatus;
+
   display.setRotation(1);
   display.fillScreen(GxEPD_WHITE);
   display.setTextColor(GxEPD_BLACK);  
+
+   
+  // draw battery
+
+  display.drawRect(startposBatteryX, startposBatteryY +2, 2, 6, 0); // +pole line
+  display.fillRect(startposBatteryX +2, startposBatteryY +0, 22, 10, 0); // frame
+  if (batstatint != 0){
+
+  display.fillRect(startposBatteryX + 3, startposBatteryY +1 , 5 * batstatint , 8, 0xFFFF); // frame
+  }
+
+  //fillRect();
+  
+
+  display.setFont(&FreeSans9pt7b);
+  display.setCursor(0, headerline);
+  display.println();
+  display.printf("%.2f", stLocaDataBus[LvBatteryVoltage].Value); /* display.setCursor(212, secondlineY) */; display.print(" V");
+  
   display.setFont(&FreeSansBold24pt7b);
   display.setCursor(114, firstlineY);
-  display.printf("%.1f", strecordValues[MqSubOutsideTemp].Value); display.setCursor(210, firstlineY); display.printf("C");   
+  display.printf("%.1f", stMqttRcvValues[MqSubOutsideTemp].Value); display.setCursor(210, firstlineY); display.printf("C");   
   display.setFont(&FreeSans18pt7b);
-  //display.println(String(strecordValues[MqSubOutsideHumidity].Value) + " %");
+  //display.println(String(stMqttRcvValues[MqSubOutsideHumidity].Value) + " %");
   display.setCursor(118, secondlineY);
-  display.printf("%.1f", strecordValues[MqSubOutsideHumidity].Value); display.setCursor(212, secondlineY); display.print("%");
+  display.printf("%.1f", stMqttRcvValues[MqSubOutsideHumidity].Value); display.setCursor(212, secondlineY); display.print("%");
   display.setCursor(100, thirdLineY);
-  display.printf("%.1f", strecordValues[MqSubOutsidePressure].Value); 
+  display.printf("%.1f", stMqttRcvValues[MqSubOutsidePressure].Value); 
   display.setFont(&FreeSans9pt7b);
   display.setCursor(223, hpalineY1);
   display.print("h");
   display.setCursor(218, hpalineY2);
   display.print("pa");
-
   display.update();
 }
 
@@ -269,8 +371,9 @@ void printScreen(){
 void setup()
 {
   //  ------ Setup I/O ----------------------------------------------------------------------------
-  pinMode(LED_PIN, OUTPUT);
+  pinMode(PIN_VBAT, INPUT);  
 
+  pinMode(LED_PIN, OUTPUT);
   digitalWrite(LED_PIN, LOW);  // Turn the LED off 
 
   //  ------ Setup Serial -------------------------------------------------------------------------
@@ -331,9 +434,6 @@ void setup()
 
 void loop(){
 
-
-
-
   MQTT_connect();
   
   // this is our 'wait for incoming subscription packets' busy subloop
@@ -344,7 +444,7 @@ void loop(){
 
     // fetched outside temperature
     if ((subscription == &outsidetemp)){
-//          && (strecordValues[actualMessage].recieved == false))      
+//          && (stMqttRcvValues[actualMessage].recieved == false))      
       StoreValue(MqSubOutsideTemp, atof((char*)outsidetemp.lastread));         
     
     // fetched outside humidity
@@ -357,8 +457,18 @@ void loop(){
     }
   }
 
+
+  
+igetBatStatus();
+
+/*
+Serial.println(stBattery.batterystatus);
+  printScreen();
+  delay(10000);
+*/
+
   // alle messages bekommen -> anzeigen & powerdown
-  if(checkRevcievedStatus(strecordValues, CIMAXDATARECORDS) == 1){
+  if(checkRevcievedStatus(stMqttRcvValues, CIMAXMQTTRECORDS) == 1){
     printScreen();
     
     display.powerDown();    
@@ -368,10 +478,9 @@ void loop(){
     esp_deep_sleep_start();
   };
 
+
   // ping the server to keep the mqtt connection alive
   if(! mqtt.ping()) {
     mqtt.disconnect();
   }
-
-
 }
