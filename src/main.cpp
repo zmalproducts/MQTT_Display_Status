@@ -63,7 +63,7 @@
 #define LED_CODE_ERROR 9999
 
 /**************************************************************************/
-
+  
 
 GxIO_Class io(SPI,  EPD_CS, EPD_DC,  EPD_RSET);
 GxEPD_Class display(io, EPD_RSET, EPD_BUSY);
@@ -78,18 +78,24 @@ Adafruit_MQTT_Subscribe pressout = Adafruit_MQTT_Subscribe(&mqtt, "/sensors/Pres
 
 
 struct singleDataRecord {
-  double Value;           // Value as double  
-  bool recieved;          // 0 = no, 1 = yes  
+  double Value;                       // Value as double  
+  bool recieved;                      // 0 = no, 1 = yes  
 };
 
 typedef struct singleDataRecord SingleDataRecord;
 
-struct battery {  
-  double adVoltageThresh[4];    // full @ max
-  unsigned int batterystatus;  
+struct singleDataRecordStatus {
+  unsigned long ulTimestampLastMessageRecieved;
 };
 
-typedef struct battery Battery;
+typedef struct singleDataRecordStatus SingleDataRecordStatus;
+
+struct ValueStatus {  
+  double adValueThresh[5];    // full @ max
+  unsigned int status;  
+};
+
+typedef struct ValueStatus valueStatus;
 
 enum enMQTTSubscription {
     MqSubOutsideTemp = 0,
@@ -100,20 +106,24 @@ enum enMQTTSubscription {
 
 enum enLocalValues {
     LvBatteryVoltage = 0,
+    LvWlanRssi = 1,
 };
 
 RTC_DATA_ATTR int bootCount = 0;
 
 const int CIMAXMQTTRECORDS = 3;
-const int CIMAXLOCALRECORDS = 1;
+const int CIMAXLOCALRECORDS = 2;
 
 
 SingleDataRecord stMqttRcvValues[CIMAXMQTTRECORDS];
+
+RTC_DATA_ATTR singleDataRecordStatus stMqttRcvValuesStat[CIMAXMQTTRECORDS] = {0,0,0};
+
+
 SingleDataRecord stLocaDataBus[CIMAXLOCALRECORDS];
 
-Battery stBattery;        // battery
-
-
+valueStatus stBattery;        // ValueStatus
+valueStatus stWlanStrength;    // ValueStatus
 
 
 
@@ -185,10 +195,64 @@ void LEDShowStatusCode(int LEDStateCode){
 
 void getBatteryVoltage(SingleDataRecord *Value){
      
-  Value->Value = ((long)analogRead(PIN_VBAT) * 3600. / 4095. * 2.) / 1000 ;
+  Value->Value = ((double)analogRead(PIN_VBAT) * 3600. / 4095. * 2.) / 1000 ;
   Value->recieved   = true;
 
 }
+
+void getWlanRssi(SingleDataRecord *Value){
+
+  Value->Value = (double)WiFi.RSSI();
+  Value->recieved   = true;
+
+  Serial.println("RSSI: ");
+  Serial.print(Value->Value);
+}
+
+int igetRssiStatus(){
+  volatile double rssi = 0;
+
+ getWlanRssi(&stLocaDataBus[LvWlanRssi]);
+  rssi = stLocaDataBus[LvWlanRssi].Value;
+
+  if (rssi <= stWlanStrength.adValueThresh[0]){       
+    stWlanStrength.status = 0;  
+  }
+  if ((rssi > stWlanStrength.adValueThresh[0]) &&     
+        (rssi <= stWlanStrength.adValueThresh[1])){
+    stWlanStrength.status = 1;  
+  }
+  if ((rssi > stWlanStrength.adValueThresh[1]) &&     
+        (rssi <= stWlanStrength.adValueThresh[2])){
+    stWlanStrength.status = 2;  
+  }  
+  if ((rssi > stWlanStrength.adValueThresh[2]) &&     
+        (rssi <= stWlanStrength.adValueThresh[3])){
+    stWlanStrength.status = 3;  
+  }
+  if (rssi > stWlanStrength.adValueThresh[3]){        
+    stWlanStrength.status = 4;  
+  }  
+  Serial.print("stWlanStrength: ");
+  Serial.println(rssi);
+
+  Serial.print("adValueThresh[0]: ");
+  Serial.println(stWlanStrength.adValueThresh[0]);  
+
+  Serial.print("adValueThresh[3]: ");
+  Serial.println(stWlanStrength.adValueThresh[3]);
+
+  Serial.print("stBattery.adValueThresh[3]: ");
+  Serial.println(stBattery.adValueThresh[0]);
+
+  Serial.print("status: ");
+  Serial.println(stWlanStrength.status);
+
+return stWlanStrength.status;
+
+}
+
+
 
 int igetBatStatus(){
 
@@ -198,66 +262,74 @@ double voltage = 0;
    
   voltage = stLocaDataBus[LvBatteryVoltage].Value;  
 
-  if (voltage <= stBattery.adVoltageThresh[0]){       // [    ]
-    stBattery.batterystatus = 0;  
+  if (voltage <= stBattery.adValueThresh[0]){       // [    ]
+    stBattery.status = 0;  
   }
-  if ((voltage > stBattery.adVoltageThresh[0]) &&     // [   |]
-        (voltage <= stBattery.adVoltageThresh[1])){
-    stBattery.batterystatus = 1;  
+  if ((voltage > stBattery.adValueThresh[0]) &&     // [   |]
+        (voltage <= stBattery.adValueThresh[1])){
+    stBattery.status = 1;  
   }
-  if ((voltage > stBattery.adVoltageThresh[1]) &&     // [  ||]
-        (voltage <= stBattery.adVoltageThresh[2])){
-    stBattery.batterystatus = 2;  
+  if ((voltage > stBattery.adValueThresh[1]) &&     // [  ||]
+        (voltage <= stBattery.adValueThresh[2])){
+    stBattery.status = 2;  
   }  
-  if ((voltage > stBattery.adVoltageThresh[2]) &&     // [ |||]
-        (voltage <= stBattery.adVoltageThresh[3])){
-    stBattery.batterystatus = 3;  
+  if ((voltage > stBattery.adValueThresh[2]) &&     // [ |||]
+        (voltage <= stBattery.adValueThresh[3])){
+    stBattery.status = 3;  
   }
-  if (voltage > stBattery.adVoltageThresh[3]){       // [||||]
-    stBattery.batterystatus = 4;  
+  if (voltage > stBattery.adValueThresh[3]){        // [||||]
+    stBattery.status = 4;  
   }  
   Serial.print("vBat: ");
   Serial.println(voltage);
 
-  Serial.print("batterystatus: ");
-  Serial.println(stBattery.batterystatus);
+  Serial.print("status: ");
+  Serial.println(stBattery.status);
 
-return stBattery.batterystatus;
+return stBattery.status;
 
 }
 
 void initDataStructures(void){
-
+Serial.println("initDataStructures: ");
 volatile int cnt=0;
 
 // Mqtt recieved values
-  for (cnt = 0; cnt <= CIMAXMQTTRECORDS; cnt++){
+  for (cnt = 0; cnt <= CIMAXMQTTRECORDS-1; cnt++){
     stMqttRcvValues[cnt].recieved = false;
     stMqttRcvValues[cnt].Value = 0;
   }
 
 // local Values  
-  for (cnt = 0; cnt <= CIMAXLOCALRECORDS; cnt++){
+  for (cnt = 0; cnt <= CIMAXLOCALRECORDS-1; cnt++){
     stLocaDataBus[cnt].recieved = false;
     stLocaDataBus[cnt].Value = 0;
   }  
 
-// battery
-  stBattery.adVoltageThresh[0] = 3.0;
-  stBattery.adVoltageThresh[1] = 3.5;
-  stBattery.adVoltageThresh[2] = 3.55;
-  stBattery.adVoltageThresh[3] = 3.6;
-  stBattery.batterystatus = 0;
+//BatteryStatus
+  stBattery.adValueThresh[0] = 3.0;
+  stBattery.adValueThresh[1] = 3.5;
+  stBattery.adValueThresh[2] = 3.55;
+  stBattery.adValueThresh[3] = 3.6;
+  stBattery.status = 0;
+
+// Wlan Status
+  stWlanStrength.adValueThresh[0] = -95.0;
+  stWlanStrength.adValueThresh[1] = -80.0;
+  stWlanStrength.adValueThresh[2] = -73.0;
+  stWlanStrength.adValueThresh[3] = -60.0;
+  stWlanStrength.status = 0;
+
+ Serial.print("stWlanStrength.adValueThresh[0]: ");
+ Serial.println(stWlanStrength.adValueThresh[0]);
 }
 
-
-
-int checkRevcievedStatus(SingleDataRecord Vaules[], int n){
+int checkRevcievedStatusAllMessages(SingleDataRecord Vaules[], int n){
 volatile int iRecCtr = 0;
 //scan if the all messages were recieved
  for (int i=0; i<=n-1; i++){
   if (Vaules[i].recieved == true){
-    //Serial.print("checkRevcievedStatus recieved[i]: "); Serial.print(Vaules[i].recieved); Serial.print("checkRevcievedStatus i: "); Serial.print(i); Serial.print(" iRecCtr: "); Serial.println(iRecCtr); 
+    //Serial.print("checkRevcievedStatusAllMessages recieved[i]: "); Serial.print(Vaules[i].recieved); Serial.print("checkRevcievedStatusAllMessages i: "); Serial.print(i); Serial.print(" iRecCtr: "); Serial.println(iRecCtr); 
     iRecCtr++;
   }
  }
@@ -313,8 +385,13 @@ void printScreen(){
   int secondlineY;
   int thirdLineY;  
 
-  int startposBatteryX = 200;
+  int startposBatteryX = 25;
   int startposBatteryY = 0;
+
+  int startposSignalX = 0;
+  int startposSignalY = 0;
+
+  int signalstrength = 4;
 
   secondlineY = firstlineY + 34;
   thirdLineY = secondlineY + 34; 
@@ -324,14 +401,14 @@ void printScreen(){
   int hpalineY2 = hpalineY1 + 11;
 
   int batstatint = 0;
-  batstatint = 4-stBattery.batterystatus;
+  batstatint = 4-stBattery.status;
 
   display.setRotation(1);
   display.fillScreen(GxEPD_WHITE);
   display.setTextColor(GxEPD_BLACK);  
 
    
-  // draw battery
+  // draw ValueStatus
 
   display.drawRect(startposBatteryX, startposBatteryY +2, 2, 6, 0); // +pole line
   display.fillRect(startposBatteryX +2, startposBatteryY +0, 22, 10, 0); // frame
@@ -340,19 +417,34 @@ void printScreen(){
   display.fillRect(startposBatteryX + 3, startposBatteryY +1 , 5 * batstatint , 8, 0xFFFF); // frame
   }
 
-  //fillRect();
-  
+  // draw signal strength
+  // -- draw antenna
+  display.drawLine(startposSignalX, startposSignalY+0, startposSignalX + 6, startposSignalY +0, 0x0000);
+  display.drawLine(startposSignalX, startposSignalY +1, startposSignalX + 3, startposSignalY +6, 0x0000);
+  display.drawLine(startposSignalX + 3, startposSignalY +6, startposSignalX +6,  startposSignalY + 1, 0x0000);
+  display.drawLine(startposSignalX + 3, startposSignalY +6, startposSignalX +3,  startposSignalY + 10, 0x0000);
 
-  display.setFont(&FreeSans9pt7b);
-  display.setCursor(0, headerline);
-  display.println();
-  display.printf("%.2f", stLocaDataBus[LvBatteryVoltage].Value); /* display.setCursor(212, secondlineY) */; display.print(" V");
+
+  signalstrength = stWlanStrength.status;
+  // draw bars 
+  for (int i = 0; i<=signalstrength; i++){     
+    // strength = 0 -> no bar    
+    // else -> bar with rising height from strength 1..4
+    if (i != 0){  
+        // (9+3*(i-1)) stat bars beginn at 9 px; bar width = 2px, 1 px space = new bar beginns every 3 px. 
+        // i-1 -> first bar beginns at 9 px 
+
+        // negative width (-2*i) bc drawing rectange from bottom to top; each bar is 2px (..2*i) higher than the previeous one
+        display.fillRect(startposSignalX + (9+3*(i-1)), startposSignalY + 10 , 2, -(2*i), 0x0000);   // balken
+    }   
   
+  }  
+  
+  // print mqtt values
   display.setFont(&FreeSansBold24pt7b);
   display.setCursor(114, firstlineY);
   display.printf("%.1f", stMqttRcvValues[MqSubOutsideTemp].Value); display.setCursor(210, firstlineY); display.printf("C");   
   display.setFont(&FreeSans18pt7b);
-  //display.println(String(stMqttRcvValues[MqSubOutsideHumidity].Value) + " %");
   display.setCursor(118, secondlineY);
   display.printf("%.1f", stMqttRcvValues[MqSubOutsideHumidity].Value); display.setCursor(212, secondlineY); display.print("%");
   display.setCursor(100, thirdLineY);
@@ -379,9 +471,7 @@ void setup()
   //  ------ Setup Serial -------------------------------------------------------------------------
   Serial.begin(115200);  
   delay(10); //Take some time to open up the Serial Monitor
-  Serial.println("serial running");
-
-  
+  Serial.println("serial running");  
   //  ------ Setup Wlan ---------------------------------------------------------------------------
 
   /****** Connect to WiFi access point. **********/ 
@@ -416,12 +506,13 @@ void setup()
   Serial.println("Setup ESP32 to sleep for every " + String(TIME_TO_SLEEP) +
   " Seconds ...");
 
-   //Print the wakeup reason for ESP32
+  //Print the wakeup reason for ESP32
   print_wakeup_reason();
 
 ++bootCount;
   Serial.println("Boot number: " + String(bootCount));
-
+  
+  
 // ------ Setup display ---------------------------------------------------------------------------
   SPI.begin(EPD_SCLK, EPD_MISO, EPD_MOSI);
   
@@ -429,7 +520,9 @@ void setup()
   display.setTextColor(GxEPD_BLACK);
 
 // ------ Setup Application------------------------------------------------------------------------
-  void initDataStructures(void);
+
+initDataStructures();
+
 }
 
 void loop(){
@@ -457,18 +550,19 @@ void loop(){
     }
   }
 
+  
+
 
   
-igetBatStatus();
 
-/*
-Serial.println(stBattery.batterystatus);
-  printScreen();
-  delay(10000);
-*/
+  
+  igetBatStatus();
+
+  igetRssiStatus();
+
 
   // alle messages bekommen -> anzeigen & powerdown
-  if(checkRevcievedStatus(stMqttRcvValues, CIMAXMQTTRECORDS) == 1){
+  if(checkRevcievedStatusAllMessages(stMqttRcvValues, CIMAXMQTTRECORDS) == 1){
     printScreen();
     
     display.powerDown();    
