@@ -36,7 +36,7 @@
 /*********************** Sleep Setup *****************************************/
 // user define
 #define uS_TO_S_FACTOR 1000000  /* Conversion factor for micro seconds to seconds */
-#define TIME_TO_SLEEP  15      /* Time ESP32 will go to sleep (in seconds) */
+#define TIME_TO_SLEEP  300      /* Time ESP32 will go to sleep (in seconds) */
 
 /************************* WiFi Access Point *********************************/
 
@@ -81,22 +81,22 @@ struct singleDataRecord {
   double Value;                       // Value as double  
   bool recieved;                      // 0 = no, 1 = yes  
 };
-
 typedef struct singleDataRecord SingleDataRecord;
 
 struct singleDataRecordStatus {
   unsigned long ulTimestampLastMessageRecieved;
 };
-
 typedef struct singleDataRecordStatus SingleDataRecordStatus;
 
+// data container to determine the status of a value
 struct ValueStatus {  
-  double adValueThresh[5];    // full @ max
+  double adValueThresh[5];            // full @ max
   unsigned int status;  
 };
 
 typedef struct ValueStatus valueStatus;
 
+// humans like names ... the MQTT subsriptions
 enum enMQTTSubscription {
     MqSubOutsideTemp = 0,
     MqSubOutsideHumidity = 1,
@@ -104,6 +104,7 @@ enum enMQTTSubscription {
     MqSubNone = 32767,
 };
 
+// ... names of the locally gathered values
 enum enLocalValues {
     LvBatteryVoltage = 0,
     LvWlanRssi = 1,
@@ -111,40 +112,28 @@ enum enLocalValues {
 
 RTC_DATA_ATTR int bootCount = 0;
 
-const int CIMAXMQTTRECORDS = 3;
-const int CIMAXLOCALRECORDS = 2;
 
+// amount of MQTT subsriptions / values
+const int CIMAXMQTTRECORDS = 3;
+
+// amount of locally gathered values
+const int CIMAXLOCALRECORDS = 2;
 
 SingleDataRecord stMqttRcvValues[CIMAXMQTTRECORDS];
 
-RTC_DATA_ATTR singleDataRecordStatus stMqttRcvValuesStat[CIMAXMQTTRECORDS] = {0,0,0};
-
-
 SingleDataRecord stLocaDataBus[CIMAXLOCALRECORDS];
 
-valueStatus stBattery;        // ValueStatus
-valueStatus stWlanStrength;    // ValueStatus
 
+valueStatus stBattery;        // datacontainer to determine the status of the battery
+valueStatus stWlanStrength;    // datacontainer to determine the status of the Wlan strenth (rssi)
 
+// data surviving the deep sleep
+RTC_DATA_ATTR singleDataRecordStatus stMqttRcvValuesStat[CIMAXMQTTRECORDS] = {0,0,0};
 
 /**functions ***********************************************************************************************************************************/
 
 
-void print_wakeup_reason(){
-  esp_sleep_wakeup_cause_t wakeup_reason;
-
-  wakeup_reason = esp_sleep_get_wakeup_cause();
-
-  switch(wakeup_reason){
-    case ESP_SLEEP_WAKEUP_EXT0 : Serial.println("Wakeup caused by external signal using RTC_Io"); break;
-    case ESP_SLEEP_WAKEUP_EXT1 : Serial.println("Wakeup caused by external signal using RTC_CNTL"); break;
-    case ESP_SLEEP_WAKEUP_TIMER : Serial.println("Wakeup caused by timer"); break;
-    case ESP_SLEEP_WAKEUP_TOUCHPAD : Serial.println("Wakeup caused by touchpad"); break;
-    case ESP_SLEEP_WAKEUP_ULP : Serial.println("Wakeup caused by ULP program"); break;
-    default : Serial.printf("Wakeup was not caused by deep sleep: %d\n",wakeup_reason); break;
-  }
-}
-
+// let the led flashhhhhhhh
 void LEDBlink(int pin, unsigned long cul_PauseTime, unsigned int repetitions){
 
 volatile int cnt = 1;
@@ -158,6 +147,7 @@ volatile int cnt = 1;
   delay(300); 
 }
 
+// status blinky bling, only usefull until the display is initialized, bc the display has the same pin as the led
 void LEDShowStatusCode(int LEDStateCode){
 
   switch (LEDStateCode) {
@@ -209,6 +199,7 @@ void getWlanRssi(SingleDataRecord *Value){
   Serial.print(Value->Value);
 }
 
+// determine the rssi status to be shown as symbol on the display
 int igetRssiStatus(){
   volatile double rssi = 0;
 
@@ -233,27 +224,13 @@ int igetRssiStatus(){
   if (rssi > stWlanStrength.adValueThresh[3]){        
     stWlanStrength.status = 4;  
   }  
-  Serial.print("stWlanStrength: ");
-  Serial.println(rssi);
-
-  Serial.print("adValueThresh[0]: ");
-  Serial.println(stWlanStrength.adValueThresh[0]);  
-
-  Serial.print("adValueThresh[3]: ");
-  Serial.println(stWlanStrength.adValueThresh[3]);
-
-  Serial.print("stBattery.adValueThresh[3]: ");
-  Serial.println(stBattery.adValueThresh[0]);
-
-  Serial.print("status: ");
-  Serial.println(stWlanStrength.status);
 
 return stWlanStrength.status;
 
 }
 
 
-
+// determine the battery status to be shown as symbol on the display
 int igetBatStatus(){
 
 double voltage = 0;
@@ -280,11 +257,6 @@ double voltage = 0;
   if (voltage > stBattery.adValueThresh[3]){        // [||||]
     stBattery.status = 4;  
   }  
-  Serial.print("vBat: ");
-  Serial.println(voltage);
-
-  Serial.print("status: ");
-  Serial.println(stBattery.status);
 
 return stBattery.status;
 
@@ -379,8 +351,10 @@ void MQTT_connect() {
   Serial.println("MQTT Connected!");
 }
 
+
+// sribble on the screen
 void printScreen(){
-  int headerline = 0;
+  int headerline = 0; // maybe we need it once ...
   int firstlineY = 52;
   int secondlineY;
   int thirdLineY;  
@@ -396,11 +370,11 @@ void printScreen(){
   secondlineY = firstlineY + 34;
   thirdLineY = secondlineY + 34; 
 
-
   int hpalineY1 = thirdLineY-14;
   int hpalineY2 = hpalineY1 + 11;
 
   int batstatint = 0;
+  // invert the batterystatus bc .. yeah it fits and I'm too dumb to make proper battery symbols
   batstatint = 4-stBattery.status;
 
   display.setRotation(1);
@@ -408,25 +382,23 @@ void printScreen(){
   display.setTextColor(GxEPD_BLACK);  
 
    
-  // draw ValueStatus
-
-  display.drawRect(startposBatteryX, startposBatteryY +2, 2, 6, 0); // +pole line
-  display.fillRect(startposBatteryX +2, startposBatteryY +0, 22, 10, 0); // frame
-  if (batstatint != 0){
-
-  display.fillRect(startposBatteryX + 3, startposBatteryY +1 , 5 * batstatint , 8, 0xFFFF); // frame
+  // draw battery staus with an battery symbol, filled by bars according to the charged level  
+  display.drawRect(startposBatteryX, startposBatteryY +2, 2, 6, 0); // battery plus pole line
+  display.fillRect(startposBatteryX +2, startposBatteryY +0, 22, 10, 0); // frame of the battery smbol
+  // draw bars
+  if (batstatint != 0){ //no bars if status is 0 -> empty
+    display.fillRect(startposBatteryX + 3, startposBatteryY +1 , 5 * batstatint , 8, 0xFFFF); // frame
   }
 
-  // draw signal strength
+  // draw signal strength (antenna symbol with bars)
   // -- draw antenna
   display.drawLine(startposSignalX, startposSignalY+0, startposSignalX + 6, startposSignalY +0, 0x0000);
   display.drawLine(startposSignalX, startposSignalY +1, startposSignalX + 3, startposSignalY +6, 0x0000);
   display.drawLine(startposSignalX + 3, startposSignalY +6, startposSignalX +6,  startposSignalY + 1, 0x0000);
   display.drawLine(startposSignalX + 3, startposSignalY +6, startposSignalX +3,  startposSignalY + 10, 0x0000);
 
-
-  signalstrength = stWlanStrength.status;
-  // draw bars 
+  //draw bars
+  signalstrength = stWlanStrength.status; // ease of use baby
   for (int i = 0; i<=signalstrength; i++){     
     // strength = 0 -> no bar    
     // else -> bar with rising height from strength 1..4
@@ -436,19 +408,20 @@ void printScreen(){
 
         // negative width (-2*i) bc drawing rectange from bottom to top; each bar is 2px (..2*i) higher than the previeous one
         display.fillRect(startposSignalX + (9+3*(i-1)), startposSignalY + 10 , 2, -(2*i), 0x0000);   // balken
-    }   
-  
+    }  
   }  
   
   // print mqtt values
   display.setFont(&FreeSansBold24pt7b);
   display.setCursor(114, firstlineY);
   display.printf("%.1f", stMqttRcvValues[MqSubOutsideTemp].Value); display.setCursor(210, firstlineY); display.printf("C");   
+
   display.setFont(&FreeSans18pt7b);
   display.setCursor(118, secondlineY);
   display.printf("%.1f", stMqttRcvValues[MqSubOutsideHumidity].Value); display.setCursor(212, secondlineY); display.print("%");
   display.setCursor(100, thirdLineY);
   display.printf("%.1f", stMqttRcvValues[MqSubOutsidePressure].Value); 
+
   display.setFont(&FreeSans9pt7b);
   display.setCursor(223, hpalineY1);
   display.print("h");
@@ -488,6 +461,7 @@ void setup()
     
     Serial.print(".");
   }
+
   LEDShowStatusCode(LED_CODE_WL_CON);
 
   Serial.println();
@@ -505,13 +479,6 @@ void setup()
   esp_sleep_enable_timer_wakeup(TIME_TO_SLEEP * uS_TO_S_FACTOR);
   Serial.println("Setup ESP32 to sleep for every " + String(TIME_TO_SLEEP) +
   " Seconds ...");
-
-  //Print the wakeup reason for ESP32
-  print_wakeup_reason();
-
-++bootCount;
-  Serial.println("Boot number: " + String(bootCount));
-  
   
 // ------ Setup display ---------------------------------------------------------------------------
   SPI.begin(EPD_SCLK, EPD_MISO, EPD_MOSI);
@@ -530,15 +497,12 @@ void loop(){
   MQTT_connect();
   
   // this is our 'wait for incoming subscription packets' busy subloop
-  // try to spend your time here
   Adafruit_MQTT_Subscribe *subscription;    
   while ((subscription = mqtt.readSubscription(5000))) {    
 
-
     // fetched outside temperature
     if ((subscription == &outsidetemp)){
-//          && (stMqttRcvValues[actualMessage].recieved == false))      
-      StoreValue(MqSubOutsideTemp, atof((char*)outsidetemp.lastread));         
+      StoreValue(MqSubOutsideTemp, atof((char*)outsidetemp.lastread));       //atof = string to float
     
     // fetched outside humidity
     } else if(subscription == &outsidehum) {        
@@ -551,17 +515,17 @@ void loop(){
   }
 
   
-
-
-  
-
-  
   igetBatStatus();
-
   igetRssiStatus();
 
+  Serial.print("vBat: ");
+  Serial.println(stLocaDataBus[LvBatteryVoltage].Value);
 
-  // alle messages bekommen -> anzeigen & powerdown
+  Serial.print("Wlan Rssi: ");
+  Serial.println(stLocaDataBus[LvWlanRssi].Value);
+
+
+  // all messages recieved, display and go to sleep
   if(checkRevcievedStatusAllMessages(stMqttRcvValues, CIMAXMQTTRECORDS) == 1){
     printScreen();
     
